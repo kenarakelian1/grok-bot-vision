@@ -1,7 +1,7 @@
 {
   "name": "grok-bot-vision",
-  "version": "0.1.0",
-  "description": "Show Grok Bot pictures, screenshots, and documents so it can see them.",
+  "version": "0.2.0",
+  "description": "Live device camera plus pictures, screenshots, and documents so Grok Bot can see them.",
   "author": "Ken Arakelian",
   "type": "module",
   "engines": {
@@ -10,7 +10,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "camera": "node dist/camera-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",

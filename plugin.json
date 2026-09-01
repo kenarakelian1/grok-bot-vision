@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "grok-bot-vision",
-  "description": "Show Grok Bot pictures, screenshots, and documents so it can see them.",
-  "version": "0.1.0",
+  "description": "Live device camera plus pictures, screenshots, and documents so Grok Bot can see them.",
+  "version": "0.2.0",
   "author": { "name": "Ken Arakelian" }
 }

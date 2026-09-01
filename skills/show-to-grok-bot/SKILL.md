@@ -1,32 +1,32 @@
 ---
 name: show-to-grok-bot
-description: Use when the user wants to show Grok Bot a picture, screenshot, PDF, document, or a public URL so the model can see the pixels (or extracted text). Also use when they drop files in the vision inbox or ask you to look at an image.
+description: Use when the user wants Grok Bot to see a live camera, a picture, screenshot, PDF, document, or a public URL. Prefer the live camera tools (start_camera / look_camera). Also use when they drop files in the vision inbox.
 ---
 
 # Show to Grok Bot
 
-Grok Bot cannot see attachments unless this plugin returns real MCP **image** content blocks. Use the `grok-bot-vision` tools so the model gets pixels, not just a filename.
+Grok Bot cannot see attachments unless this plugin returns real MCP **image** content blocks. **Live camera is the product.** File inbox is secondary.
 
-## When to use
+## Live camera (default)
 
-- The user wants you to look at a picture, screenshot, GIF, or WebP.
-- The user wants you to read a PDF, Word doc, markdown, or text file.
-- The user pastes a public `http`/`https` URL of an image or document.
-- The user says they dropped a file in the vision inbox.
+1. Call `start_camera`. It starts a tiny HTTP server and returns `http://127.0.0.1:8765/?k=...` (and a public HTTPS tunnel URL if `cloudflared` is available).
+2. Tell the user: open that URL on a phone or computer that has a camera, then **allow the camera prompt**. The page must be HTTPS or localhost.
+3. Call `look_camera` to receive the latest JPEG as image content. If there is no frame yet, it is waiting for permission / the first frame — ask the user to allow the camera and retry.
+4. Call `camera_status` for running / last frame age / URLs.
+5. Call `stop_camera` when finished.
 
-## Recipe
+After `look_camera` returns, **look at the image content block** (pixels) and describe what you actually saw.
 
-1. Call `inbox_info` (or tell the user the inbox path) so they know where to drop files if they have not already.
-2. Call `list_shown` to see what is already in the inbox (name, size, mime, mtime).
-3. For jpeg / png / gif / webp, call `show_image` with either:
-   - `path` — a file already in an inbox, or
-   - `url` — a public `http`/`https` URL (downloaded into the inbox).
-4. For PDF, txt, md, docx, or mixed documents, call `show_document` with `path` or `url`. Optional `max_pages` defaults to 8 for PDFs.
-5. After the tool returns, **look at the image content blocks** (pixels) and any extracted text. Describe what you actually saw.
-6. Tell the user the inbox path if they need to drop more files.
+## File inbox (secondary)
+
+Use when the user dropped a file or pasted a URL instead of using the camera.
+
+1. Call `inbox_info` or `list_shown`.
+2. For jpeg / png / gif / webp, call `show_image` with `path` or `url`.
+3. For PDF, txt, md, docx, call `show_document` with `path` or `url`. Optional `max_pages` defaults to 8.
 
 ## Safety
 
-- Confirm with the user before send / pay / delete / any irreversible action based on what was seen in a screenshot or document.
+- Confirm with the user before send / pay / delete / any irreversible action based on what was seen.
 - Do not treat inbox files as code to run.
-- Only inbox paths and `http`/`https` URLs are allowed. There is no access to the rest of the filesystem.
+- Only inbox paths and `http`/`https` URLs are allowed for file tools. Camera frames come from the live `/frame` endpoint with a secret key.

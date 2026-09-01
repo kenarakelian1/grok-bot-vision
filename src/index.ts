@@ -19,6 +19,12 @@ import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { inflateRawSync } from "node:zlib";
+import {
+  startCameraServer,
+  stopCameraServer,
+  getLatestFrame,
+  getCameraStatus,
+} from "./camera-http.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -282,7 +288,7 @@ async function downloadToInbox(urlStr: string): Promise<string> {
     const res = await fetch(parsed, {
       signal: ac.signal,
       redirect: "follow",
-      headers: { "user-agent": "grok-bot-vision/0.1.0" },
+      headers: { "user-agent": "grok-bot-vision/0.2.0" },
     });
     if (!res.ok) {
       throw new Error(`Download failed: HTTP ${res.status} ${res.statusText}`.trim());
@@ -603,7 +609,7 @@ async function showDocument(filePath: string, maxPages: number): Promise<Content
 
 const server = new McpServer({
   name: "grok-bot-vision",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 server.tool(
@@ -683,7 +689,8 @@ server.tool(
   async () => {
     inboxRoots();
     const text = [
-      "Vision inbox — drop pictures, screenshots, PDFs, or docs here, then call list_shown / show_image / show_document.",
+      "Primary: live camera — call start_camera, open the URL on a device with a webcam, allow permission, then look_camera.",
+      "Secondary: file inbox — drop pictures, screenshots, PDFs, or docs, then list_shown / show_image / show_document.",
       "",
       `Primary inbox: ${PRIMARY_INBOX}`,
       `  (override with env VISION_INBOX)`,
@@ -694,6 +701,163 @@ server.tool(
       "Paths outside these directories are rejected. Uploaded files are never executed.",
     ].join("\n");
     return ok([{ type: "text", text }]);
+  },
+);
+
+
+function uniquePaths(paths: string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const resolved = path.resolve(p);
+    if (!out.includes(resolved)) out.push(resolved);
+  }
+  return out;
+}
+
+function mcpCameraWritePaths(): string[] {
+  return uniquePaths([path.join(PRIMARY_INBOX, "live.jpg"), path.join(PLUGIN_INBOX, "live.jpg")]);
+}
+
+function inboxLiveFrame(): { buffer: Buffer; capturedAt: number; filePath: string } | null {
+  const candidates = uniquePaths([
+    path.join(PRIMARY_INBOX, "live.jpg"),
+    path.join(PLUGIN_INBOX, "live.jpg"),
+    path.resolve(process.cwd(), "live.jpg"),
+  ]);
+  let best: { buffer: Buffer; capturedAt: number; filePath: string } | null = null;
+  for (const filePath of candidates) {
+    try {
+      if (!existsSync(filePath)) continue;
+      const st = statSync(filePath);
+      if (!st.isFile() || st.size < 3) continue;
+      const buf = readFileSync(filePath);
+      if (!(buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) continue;
+      if (!best || st.mtimeMs > best.capturedAt) {
+        best = { buffer: buf, capturedAt: st.mtimeMs, filePath };
+      }
+    } catch {
+      // next
+    }
+  }
+  return best;
+}
+
+function resolveLiveFrame(): {
+  buffer: Buffer;
+  capturedAt: number;
+  source: string;
+} | null {
+  const mem = getLatestFrame();
+  const disk = inboxLiveFrame();
+  if (mem && disk) {
+    if (mem.capturedAt >= disk.capturedAt) {
+      return { buffer: mem.buffer, capturedAt: mem.capturedAt, source: "live stream" };
+    }
+    return { buffer: disk.buffer, capturedAt: disk.capturedAt, source: disk.filePath };
+  }
+  if (mem) return { buffer: mem.buffer, capturedAt: mem.capturedAt, source: "live stream" };
+  if (disk) return { buffer: disk.buffer, capturedAt: disk.capturedAt, source: disk.filePath };
+  return null;
+}
+
+server.tool(
+  "start_camera",
+  "Start the live device camera page. Returns a local URL (and a public HTTPS tunnel URL if cloudflared is installed). Open that URL on a phone or computer with a camera, allow the prompt, then call look_camera to see live frames.",
+  async () => {
+    try {
+      inboxRoots();
+      const result = await startCameraServer({
+        tryTunnel: true,
+        writePaths: mcpCameraWritePaths(),
+      });
+      const text = [
+        result.instructions,
+        "",
+        result.tunnelNote,
+        `Bound hosts: ${result.boundHosts.join(", ") || "none"}`,
+        `Port: ${result.port}`,
+        `Writing live.jpg to: ${result.writePaths.join(", ")}`,
+      ].join("\n");
+      return ok([{ type: "text", text }]);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  },
+);
+
+server.tool(
+  "look_camera",
+  "Return the latest live camera JPEG as real MCP image content so the model can see the pixels. If no frame yet, reports that it is waiting for camera permission / first frame.",
+  async () => {
+    try {
+      const frame = resolveLiveFrame();
+      if (!frame) {
+        return ok([
+          {
+            type: "text",
+            text: "Waiting for camera permission / first frame. Call start_camera, open the camera URL on a device with a webcam, and allow the camera prompt.",
+          },
+        ]);
+      }
+      const age = Math.max(0, Date.now() - frame.capturedAt);
+      return ok([
+        imageBlock(frame.buffer, "image/jpeg"),
+        {
+          type: "text",
+          text: `Live camera frame (${formatBytes(frame.buffer.length)}, ${age} ms ago)\nsource: ${frame.source}`,
+        },
+      ]);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  },
+);
+
+server.tool(
+  "stop_camera",
+  "Stop accepting live camera frames and stop the camera HTTP server (and any HTTPS tunnel).",
+  async () => {
+    try {
+      const status = await stopCameraServer();
+      const still = resolveLiveFrame();
+      const text = [
+        "Camera server stopped. New frames are not accepted.",
+        status.hasFrame || still
+          ? "The last captured frame is still available via look_camera."
+          : "No frame was captured.",
+      ].join("\n");
+      return ok([{ type: "text", text }]);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  },
+);
+
+server.tool(
+  "camera_status",
+  "Live camera status: running?, last frame age ms, hasFrame, local and tunnel URLs.",
+  async () => {
+    try {
+      const status = getCameraStatus();
+      const frame = resolveLiveFrame();
+      const age = frame ? Math.max(0, Date.now() - frame.capturedAt) : status.lastFrameAgeMs;
+      const lines = [
+        `running: ${status.running ? "yes" : "no"}`,
+        `accepting: ${status.accepting ? "yes" : "no"}`,
+        `hasFrame: ${frame || status.hasFrame ? "yes" : "no"}`,
+        `lastFrameAgeMs: ${age ?? "n/a"}`,
+        `lastFrameBytes: ${frame?.buffer.length ?? status.lastFrameBytes ?? "n/a"}`,
+        `port: ${status.port ?? "n/a"}`,
+        `boundHosts: ${status.boundHosts.join(", ") || "n/a"}`,
+        `localUrl: ${status.localUrl ?? "n/a"}`,
+        `tunnelUrl: ${status.tunnelUrl ?? "n/a"}`,
+        status.lanUrls.length ? `lanUrls:\n  ${status.lanUrls.join("\n  ")}` : "lanUrls: none",
+        `writePaths: ${status.writePaths.join(", ") || "n/a"}`,
+      ];
+      return ok([{ type: "text", text: lines.join("\n") }]);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
   },
 );
 
