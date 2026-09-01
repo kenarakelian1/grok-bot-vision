@@ -3,7 +3,10 @@
   "displayName": "Vision",
   "description": "Show Grok Bot pictures, screenshots, and documents so it can see them.",
   "version": "0.1.0",
-  "author": { "name": "Ken Arakelian" },
+  "author": {
+    "name": "Ken Arakelian"
+  },
   "skills": "./skills/",
-  "mcpServers": "./mcp.json"
+  "mcpServers": "./mcp.json",
+  "logo": "assets/logo.svg"
 }
