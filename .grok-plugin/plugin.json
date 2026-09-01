@@ -1,0 +1,8 @@
+{
+  "name": "grok-bot-vision",
+  "version": "0.1.0",
+  "description": "Show Grok Bot pictures, screenshots, PDFs, and documents so it can see the pixels.",
+  "author": { "name": "Ken Arakelian" },
+  "mcpServers": "./.grok-plugin/mcp.json",
+  "keywords": ["vision", "images", "documents", "mcp"]
+}

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "grok-bot-vision": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./dist/index.js"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
